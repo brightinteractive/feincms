@@ -80,7 +80,7 @@ Visit these sites
 Quickstart
 ----------
 
-You can find a short quickstart guide at QUICKSTART.rst
+You can find a short quickstart guide at QUICKSTART.rst (or just run ./quickstart-virtualenv.sh).
 
 Optional Packages
 -----------------
