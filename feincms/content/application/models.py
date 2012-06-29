@@ -2,6 +2,7 @@
 Third-party application inclusion support.
 """
 
+from email.utils import parsedate
 from time import mktime
 import re
 
@@ -17,11 +18,6 @@ from feincms import settings
 from feincms.admin.item_editor import ItemEditorForm
 from feincms.contrib.fields import JSONField
 from feincms.utils import get_object
-
-try:
-    from email.utils import parsedate
-except ImportError: # py 2.4 compat
-    from email.Utils import parsedate
 
 try:
     from threading import local
@@ -43,6 +39,7 @@ def retrieve_page_information(page, request=None):
     several times to the website."""
     _local.proximity_info = (page.tree_id, page.lft, page.rght, page.level)
     _local.page_class = page.__class__
+    _local.page_cache_key_fn = page.cache_key
 
 
 def _empty_reverse_cache():
@@ -63,6 +60,9 @@ def app_reverse(viewname, urlconf, args=None, kwargs=None, prefix=None, *vargs, 
         or
 
         app_reverse('mymodel-detail', 'myapp.urls', kwargs=...)
+
+    The second argument may also be a request object if you want to reverse
+    an URL belonging to the current application content.
     """
 
     # First parameter might be a request instead of an urlconf path, so
@@ -73,16 +73,21 @@ def app_reverse(viewname, urlconf, args=None, kwargs=None, prefix=None, *vargs, 
     # vargs and vkwargs are used to send through additional parameters which are
     # uninteresting to us (such as current_app)
 
+    # get additional cache keys from the page if available
+    # refs https://github.com/feincms/feincms/pull/277/
+    fn = getattr(_local, 'page_cache_key_fn', lambda: '')
+    cache_key_prefix = fn()
+
     app_cache_keys = {
-        'none': 'app_%s_none' % urlconf,
+        'none': '%s:app_%s_none' % (cache_key_prefix, urlconf),
         }
     proximity_info = getattr(_local, 'proximity_info', None)
     url_prefix = None
 
     if proximity_info:
         app_cache_keys.update({
-            'all': 'app_%s_%s_%s_%s_%s' % ((urlconf,) + proximity_info),
-            'tree': 'app_%s_%s' % (urlconf, proximity_info[0]),
+            'all': '%s:app_%s_%s_%s_%s_%s' % ((cache_key_prefix, urlconf,) + proximity_info),
+            'tree': '%s:app_%s_%s' % (cache_key_prefix, urlconf, proximity_info[0]),
             })
 
     for key in ('all', 'tree', 'none'):
@@ -156,6 +161,9 @@ def app_reverse(viewname, urlconf, args=None, kwargs=None, prefix=None, *vargs, 
             url = content.parent._cached_url[1:-1]
             if url:
                 prefix = _reverse('feincms_handler', args=(url,))
+                # prefix must always ends with a slash
+                prefix += '/' if prefix[-1] != '/' else ''
+
             else:
                 prefix = _reverse('feincms_home')
 
@@ -207,7 +215,7 @@ def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, *vargs,
       author to resolve URLs only reachable via an ``ApplicationContent``,
       even inside another application contents' ``process`` method::
 
-          {% url registration.urls/auth_logout %}
+          {% url "registration.urls/auth_logout" %}
     """
 
     if isinstance(viewname, basestring) and APPLICATIONCONTENT_RE.match(viewname):
@@ -220,7 +228,8 @@ def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, *vargs,
 
         import warnings
         warnings.warn("Reversing URLs through a patched 'django.core.urlresolvers.reverse'"
-            " function or using the 'urlconf/view_name' notation has been deprecated."
+            " function or using the 'urlconf/view_name' notation has been deprecated and"
+            " support for it will be removed in FeinCMS v1.7."
             " Use 'feincms.content.application.models.app_reverse' or the 'app_reverse'"
             " template tag from 'applicationcontent_tags' directly.",
             DeprecationWarning, stacklevel=2)
@@ -242,10 +251,10 @@ def reverse(viewname, urlconf=None, args=None, kwargs=None, prefix=None, *vargs,
 
 if settings.FEINCMS_REVERSE_MONKEY_PATCH:
     import warnings
-    warnings.warn("FeinCMS will stop monkey-patching Django's 'django.core.urlresolvers.reverse'"
-        " method in v1.6. You should use the explicit 'feincms.content.application.models.app_reverse'"
+    warnings.warn("FeinCMS will stop supporting the old 'urlconf/view_name' notation "
+        " method in v1.7. You should use the explicit 'feincms.content.application.models.app_reverse'"
         " function and {% app_reverse %} template tag instead. Set 'FEINCMS_REVERSE_MONKEY_PATCH'"
-        " to False to use the new behavior now.",
+        " to False to use the new behavior now (which is the default since v1.6).",
         DeprecationWarning, stacklevel=2)
     urlresolvers.reverse = reverse
 
@@ -265,12 +274,6 @@ class ApplicationContent(models.Model):
 
     @classmethod
     def initialize_type(cls, APPLICATIONS):
-        # Generate a more flexible application configuration structure from
-        # the legacy pattern:
-
-        # TODO: Consider changing the input signature to something cleaner, at
-        # the cost of a one-time backwards incompatible change
-
         for i in APPLICATIONS:
             if not 2 <= len(i) <= 3:
                 raise ValueError("APPLICATIONS must be provided with tuples containing at least two parameters (urls, name) and an optional extra config dict")
@@ -306,6 +309,8 @@ class ApplicationContent(models.Model):
 
                 if instance:
                     try:
+                        # TODO use urlconf_path from POST if set
+                        # urlconf_path = request.POST.get('...urlconf_path', instance.urlconf_path)
                         self.app_config = cls.ALL_APPS_CONFIG[instance.urlconf_path]['config']
                     except KeyError:
                         self.app_config = {}
@@ -321,14 +326,6 @@ class ApplicationContent(models.Model):
 
                     for k, v in self.custom_fields.items():
                         self.fields[k] = v
-
-
-            def clean(self, *args, **kwargs):
-                cleaned_data = super(ApplicationContentItemEditorForm, self).clean(*args, **kwargs)
-
-                # TODO: Check for newly added instances so we can force a re-validation of their custom fields
-
-                return cleaned_data
 
             def save(self, commit=True, *args, **kwargs):
                 # Django ModelForms return the model instance from save. We'll

@@ -12,6 +12,7 @@ from datetime import datetime
 
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
 # ------------------------------------------------------------------------
@@ -23,7 +24,7 @@ def format_date(d, if_none=''):
 
     if d is None: return if_none
 
-    now = datetime.now()
+    now = timezone.now()
     fmt = (d.year == now.year) and '%d.%m' or '%d.%m.%Y'
     return d.strftime(fmt)
 
@@ -40,7 +41,7 @@ def granular_now(n=None):
     Also useful if you are using johnny-cache or a similar queryset cache.
     """
     if n is None:
-        n = datetime.now()
+        n = timezone.now()
     return datetime(n.year, n.month, n.day, n.hour, (n.minute // 5) * 5)
 
 # ------------------------------------------------------------------------
@@ -64,8 +65,8 @@ def register(cls, admin_cls):
     cls.save = granular_save
 
     # Append publication date active check
-    if hasattr(cls.objects, 'add_to_active_filters'):
-        cls.objects.add_to_active_filters(
+    if hasattr(cls._default_manager, 'add_to_active_filters'):
+        cls._default_manager.add_to_active_filters(
             Q(publication_date__lte=granular_now) &
             (Q(publication_end_date__isnull=True) | Q(publication_end_date__gt=granular_now)),
             key='datepublisher')

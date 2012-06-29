@@ -23,12 +23,6 @@ from django.utils.translation import ugettext_lazy as _
 from feincms import ensure_completely_loaded
 from feincms.utils import get_object, copy_model_instance
 
-try:
-    any
-except NameError:
-    # For Python 2.4
-    from feincms.compat import c_any as any
-
 
 class Region(object):
     """
@@ -315,6 +309,13 @@ class ExtensionsMixin(object):
                         try:
                             fn = get_object('%s.%s.register' % (path, ext))
                             if fn:
+                                warnings.warn(
+                                    'Using short names for extensions has been deprecated'
+                                    ' and will be removed in FeinCMS v1.8.'
+                                    ' Please provide the full python path to the extension'
+                                    ' %s instead (%s.%s).' % (ext, path, ext),
+                                    DeprecationWarning, stacklevel=2)
+
                                 break
                         except ImportError:
                             pass
@@ -405,7 +406,7 @@ def create_base_model(inherit_from=models.Model):
                 cls._feincms_templates = SortedDict()
                 cls.TEMPLATES_CHOICES = []
 
-            instances = getattr(cls, '_feincms_templates', SortedDict())
+            instances = cls._feincms_templates
 
             for template in templates:
                 if not isinstance(template, Template):

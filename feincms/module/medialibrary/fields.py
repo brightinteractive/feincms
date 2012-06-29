@@ -1,17 +1,26 @@
+# ------------------------------------------------------------------------
+# coding=utf-8
+# ------------------------------------------------------------------------
+
+from __future__ import absolute_import
+
+from os.path import splitext
+
+from django.contrib.admin.widgets import AdminFileWidget
 from django.contrib.admin.widgets import ForeignKeyRawIdWidget
 from django.db import models
 from django.utils.html import escape
+from django.utils.safestring import mark_safe
 from django.utils.text import truncate_words
 from django.utils.translation import ugettext_lazy as _
 
 from feincms.admin.item_editor import FeinCMSInline
-from feincms.module.medialibrary.models import MediaFile
-from feincms.templatetags import feincms_thumbnail
-
+from .models import MediaFile
+from .thumbnail import admin_thumbnail
 
 __all__ = ('MediaFileForeignKey', 'ContentWithMediaFile')
 
-
+# ------------------------------------------------------------------------
 class MediaFileForeignKeyRawIdWidget(ForeignKeyRawIdWidget):
     def __init__(self, original):
         self.__dict__ = original.__dict__
@@ -21,9 +30,9 @@ class MediaFileForeignKeyRawIdWidget(ForeignKeyRawIdWidget):
         try:
             obj = self.rel.to._default_manager.using(self.db).get(**{key: value})
             label = [u'&nbsp;<strong>%s</strong>' % escape(truncate_words(obj, 14))]
+            image = admin_thumbnail(obj)
 
-            if obj.type == 'image':
-                image = feincms_thumbnail.thumbnail(obj.file.name, '240x120')
+            if image:
                 label.append(u'<br /><img src="%s" alt="" style="margin:1em 0 0 10em" />' % image)
 
             return u''.join(label)
@@ -32,6 +41,10 @@ class MediaFileForeignKeyRawIdWidget(ForeignKeyRawIdWidget):
 
 
 class MediaFileForeignKey(models.ForeignKey):
+    """
+    Drop-in replacement for Django's ``models.ForeignKey`` which automatically adds a
+    thumbnail of media files if the media file foreign key is shown using ``raw_id_fields``.
+    """
     def formfield(self, **kwargs):
         if 'widget' in kwargs and isinstance(kwargs['widget'], ForeignKeyRawIdWidget):
             kwargs['widget'] = MediaFileForeignKeyRawIdWidget(kwargs['widget'])
@@ -48,6 +61,23 @@ class ContentWithMediaFile(models.Model):
     class Meta:
         abstract = True
 
+# ------------------------------------------------------------------------
+class AdminFileWithPreviewWidget(AdminFileWidget):
+    """
+    Simple AdminFileWidget, but detects if the file is an image and
+    tries to render a small thumbnail besides the input field.
+    """
+    def render(self, name, value, attrs=None):
+        r = super(AdminFileWithPreviewWidget, self).render(name, value, attrs=attrs)
+
+        if value and getattr(value, 'instance', None):
+            image = admin_thumbnail(value.instance)
+            if image:
+                r = mark_safe((u'<img src="%s" alt="" style="float: left; padding-right: 8px; border-right: 1px solid #ccc; margin-right: 8px">' % image) + r)
+
+        return r
+
+# ------------------------------------------------------------------------
 
 try:
     from south.modelsinspector import add_introspection_rules

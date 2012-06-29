@@ -1,7 +1,7 @@
 import time
-from datetime import datetime
 
 from django.db import models
+from django.utils import timezone
 from django.utils.safestring import mark_safe
 from django.utils.translation import ugettext_lazy as _
 from django.template.loader import render_to_string
@@ -45,7 +45,7 @@ class RSSContent(models.Model):
             'feed_link': feed['feed']['link'],
             'entries': entries,
             })
-        self.last_updated = datetime.now()
+        self.last_updated = timezone.now()
 
         if save:
             self.save()

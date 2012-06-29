@@ -66,12 +66,14 @@ class BlogEntriesNavigationExtension(NavigationExtension):
         for entry in Entry.objects.all():
             yield PagePretender(
                 title=entry.title,
-                url=app_reverse('blog_entry_details', 'blog_urls', kwargs={'object_id': entry.id}),
+                url=app_reverse('blog_entry_details', 'blog_urls', kwargs={'pk': entry.id}),
+                level=page.level + 1,
                 )
 
-Page.register_extensions('navigation')
-Page.register_extensions('sites')
-
+Page.register_extensions(
+    'feincms.module.page.extensions.navigation',
+    'feincms.module.page.extensions.sites',
+    )
 
 
 class Category(MPTTModel):

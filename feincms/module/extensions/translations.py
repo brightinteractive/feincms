@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------
+# coding=utf-8
+# ------------------------------------------------------------------------
+
 """
 This extension adds a language field to every page. When calling setup_request,
 the page's language is activated.
@@ -5,10 +9,14 @@ Pages in secondary languages can be said to be a translation of a page in the
 primary language (the first language in settings.LANGUAGES), thereby enabling
 deeplinks between translated pages.
 
-This extension requires an activated LocaleMiddleware or something equivalent.
+It is recommended to activate :class:`django.middleware.locale.LocaleMiddleware`
+so that the correct language will be activated per user or session even for
+non-FeinCMS managed views such as Django's administration tool.
 """
 
 # ------------------------------------------------------------------------
+import logging
+
 from django.conf import settings as django_settings
 from django.db import models
 from django.http import HttpResponseRedirect
@@ -18,6 +26,9 @@ from django.utils.translation import ugettext_lazy as _
 from feincms import settings
 from feincms.translations import is_primary_language
 from feincms._internal import monkeypatch_method, monkeypatch_property
+
+# ------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------------
 def user_has_language_set(request):
@@ -97,6 +108,12 @@ def translations_request_processor_standard(page, request):
     return translation_set_language(request, page.language)
 
 # ------------------------------------------------------------------------
+def get_current_language_code(request):
+    language_code = getattr(request, 'LANGUAGE_CODE', None)
+    if language_code is None:
+        logger.warning("Could not access request.LANGUAGE_CODE. Is 'django.middleware.locale.LocaleMiddleware' in MIDDLEWARE_CLASSES?")
+    return language_code
+
 # ------------------------------------------------------------------------
 def register(cls, admin_cls):
     cls.add_to_class('language', models.CharField(_('language'), max_length=10,
@@ -129,7 +146,7 @@ def register(cls, admin_cls):
             if target and target.find('//') == -1: # Not an offsite link http://bla/blubb
                 try:
                     page = cls.objects.page_for_path(target)
-                    page = page.get_translation(getattr(request, 'LANGUAGE_CODE', None))
+                    page = page.get_translation(get_current_language_code(request))
                     target = page.get_absolute_url()
                 except cls.DoesNotExist:
                     pass

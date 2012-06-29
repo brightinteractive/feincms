@@ -2,6 +2,8 @@
 # coding=utf-8
 # ------------------------------------------------------------------------
 
+import warnings
+
 from django import template
 from django.conf import settings
 from django.db.models import Q
@@ -15,6 +17,100 @@ register = template.Library()
 
 
 # ------------------------------------------------------------------------
+@register.assignment_tag(takes_context=True)
+def feincms_nav(context, feincms_page, level=1, depth=1):
+    """
+    New, simplified version of the ``{% feincms_navigation %}`` template tag.
+
+    Generally we don't like abbreviations too much, but the similarity with
+    the HTML5 <nav> tag was just too tempting.
+    """
+
+    if isinstance(feincms_page, HttpRequest):
+        feincms_page = Page.objects.for_request(feincms_page, best_match=True)
+
+    mptt_opts = feincms_page._mptt_meta
+
+    # mptt starts counting at zero
+    mptt_level_range = [level - 1, level + depth - 1]
+
+    queryset = Page.objects.in_navigation().filter(**{
+        '%s__gte' % mptt_opts.level_attr: mptt_level_range[0],
+        '%s__lt' % mptt_opts.level_attr: mptt_level_range[1],
+        })
+
+    page_level = getattr(feincms_page, mptt_opts.level_attr)
+
+    # Used for subset filtering (level>1)
+    parent = None
+
+    if level > 1:
+        # A subset of the pages is requested. Determine it depending
+        # upon the passed page instance
+
+        if level - 2 == page_level:
+            # The requested pages start directly below the current page
+            parent = feincms_page
+
+        elif level - 2 < page_level:
+            # The requested pages start somewhere higher up in the tree
+            parent = feincms_page.get_ancestors()[level - 2]
+
+        if parent:
+            # Special case for navigation extensions
+            if getattr(parent, 'navigation_extension', None):
+                return parent.extended_navigation(depth=depth,
+                    request=context.get('request'))
+            queryset &= parent.get_descendants()
+
+    if depth > 1:
+        # Filter out children with inactive parents
+        # None (no parent) is always allowed
+        parents = set([None])
+        if parent:
+            # Subset filtering; allow children of parent as well
+            parents.add(parent.id)
+
+        def _filter(iterable):
+            for elem in iterable:
+                if elem.parent_id in parents:
+                    yield elem
+                parents.add(elem.id)
+
+        queryset = _filter(queryset)
+
+    if 'navigation' in feincms_page._feincms_extensions:
+        # Filter out children of nodes which have a navigation extension
+        extended_node_rght = [] # mptt node right value
+
+        def _filter(iterable):
+            for elem in iterable:
+                if extended_node_rght:
+                    if getattr(elem, mptt_opts.right_attr) < extended_node_rght[-1]:
+                        # Still inside some navigation extension
+                        continue
+                    else:
+                        extended_node_rght.pop()
+
+                if getattr(elem, 'navigation_extension', None):
+                    yield elem
+                    extended_node_rght.append(getattr(elem, mptt_opts.right_attr))
+
+                    for extended in elem.extended_navigation(depth=depth,
+                            request=context.get('request')):
+                        if getattr(extended, mptt_opts.level_attr, 0) < level + depth - 1:
+                            yield extended
+
+                else:
+                    yield elem
+
+        queryset = _filter(queryset)
+
+    # Return a list, not a generator so that it can be consumed
+    # several times in a template.
+    return list(queryset)
+
+
 # ------------------------------------------------------------------------
 class NavigationNode(SimpleAssignmentNodeWithVarAndArgs):
     """
@@ -36,83 +132,19 @@ class NavigationNode(SimpleAssignmentNodeWithVarAndArgs):
     """
 
     def what(self, instance, args):
-        level = int(args.get('level', 1))
-        depth = int(args.get('depth', 1))
-        mptt_limit = level + depth - 1 # adjust limit to mptt level indexing
+        warnings.warn('feincms_navigation and feincms_navigation_extended have'
+            ' been deprecated and will be removed in FeinCMS v1.8. Start using'
+            ' the new, shiny and bug-free feincms_nav today!',
+            DeprecationWarning, stacklevel=3)
 
-        if isinstance(instance, HttpRequest):
-            instance = Page.objects.for_request(instance)
-
-        entries = self._what(instance, level, depth)
-
-        if args.get('extended', False):
-            _entries = list(entries)
-            entries = []
-            extended_node_rght = [] # rght value of extended node.
-                                    # used to filter out children of
-                                    # nodes sporting a navigation extension
-
-            for entry in _entries:
-                if getattr(entry, 'navigation_extension', None):
-                    entries.append(entry)
-                    extended_node_rght.append(entry.rght)
-
-                    entries.extend(e for e in entry.extended_navigation(depth=depth,
-                        request=self.render_context.get('request', None))
-                        if getattr(e, 'level', 0) < mptt_limit)
-                else:
-                    if extended_node_rght:
-                        if entry.rght < extended_node_rght[-1]:
-                            continue
-                        else:
-                            extended_node_rght.pop()
-
-                    entries.append(entry)
-
-        return entries
-
-    def _in_navigation_depth(self, level, depth):
-        q = Q(level__lt=level + depth)
-        for i in range(depth):
-            q &= Q(level__lt=level + i) | Q(**{
-                'parent__' * i + 'in_navigation': True,
-                'level__gte': level + i,
-            })
-        return q
-
-    def _what(self, instance, level, depth):
-        if level <= 1:
-            if depth == 1:
-                return Page.objects.toplevel_navigation()
-            else:
-                return Page.objects.active().filter(
-                    self._in_navigation_depth(0, depth))
-
-        # mptt starts counting at 0, NavigationNode at 1; if we need the submenu
-        # of the current page, we have to add 2 to the mptt level
-        if instance.level + 2 == level:
-            pass
-        elif instance.level + 2 < level:
-            try:
-                queryset = instance.get_descendants().filter(level=level - 2, in_navigation=True)
-                instance = PageManager.apply_active_filters(queryset)[0]
-            except IndexError:
-                return []
-        else:
-            instance = instance.get_ancestors()[level - 2]
-
-        # special case for the navigation extension
-        if getattr(instance, 'navigation_extension', None):
-            return instance.extended_navigation(depth=depth,
-                                                request=self.render_context.get('request', None))
-        else:
-            if depth == 1:
-                return instance.children.in_navigation()
-            else:
-                queryset = instance.get_descendants().filter(
-                    self._in_navigation_depth(level - 1, depth))
-                return PageManager.apply_active_filters(queryset)
-register.tag('feincms_navigation', do_simple_assignment_node_with_var_and_args_helper(NavigationNode))
+        return feincms_nav(
+            self.render_context,
+            instance,
+            level=int(args.get('level', 1)),
+            depth=int(args.get('depth', 1)),
+            )
+register.tag('feincms_navigation',
+    do_simple_assignment_node_with_var_and_args_helper(NavigationNode))
 
 # ------------------------------------------------------------------------
 class ExtendedNavigationNode(NavigationNode):
@@ -127,7 +159,8 @@ class ExtendedNavigationNode(NavigationNode):
         context[self.var_name] = self.what(instance, _parse_args(self.args, context))
 
         return ''
-register.tag('feincms_navigation_extended', do_simple_assignment_node_with_var_and_args_helper(ExtendedNavigationNode))
+register.tag('feincms_navigation_extended',
+    do_simple_assignment_node_with_var_and_args_helper(ExtendedNavigationNode))
 
 # ------------------------------------------------------------------------
 class ParentLinkNode(SimpleNodeWithVarAndArgs):
@@ -362,12 +395,6 @@ def is_sibling_of(page1, page2):
         return False
 
 # ------------------------------------------------------------------------
-try:
-    any
-except NameError:
-    # For Python 2.4
-    from feincms.compat import c_any as any
-
 @register.filter
 def siblings_along_path_to(page_list, page2):
     """
@@ -379,35 +406,40 @@ def siblings_along_path_to(page_list, page2):
     A typical use case is building a navigation menu with the active
     path to the current page expanded::
 
-        {% feincms_navigation of feincms_page as navitems level=1,depth=3 %}
+        {% feincms_nav feincms_page level=1 depth=3 as navitems %}
         {% with navitems|siblings_along_path_to:feincms_page as navtree %}
             ... whatever ...
         {% endwith %}
 
     """
-    try:
-        # Try to avoid hitting the database: If the current page is in_navigation,
-        # then all relevant pages are already in the incoming list, no need to
-        # fetch ancestors or children.
+    if page_list:
+        try:
+            # Try to avoid hitting the database: If the current page is in_navigation,
+            # then all relevant pages are already in the incoming list, no need to
+            # fetch ancestors or children.
 
-        # NOTE: This assumes that the input list actually is complete (ie. comes from
-        # feincms_navigation). We'll cope with the fall-out of that assumption
-        # when it happens...
-        ancestors = [a_page for a_page in page_list 
-                                if _is_equal_or_parent_of(a_page, page2)]
-        if not ancestors:
-            # Happens when we sit on a page outside the navigation tree
-            # so fake an active root page to avoid a get_ancestors() db call
-            # which would only give us a non-navigation root page anyway.
-            p = Page(title="dummy", tree_id=-1, parent_id=None, in_navigation=False)
-            ancestors = (p,)
+            # NOTE: This assumes that the input list actually is complete (ie. comes from
+            # feincms_nav). We'll cope with the fall-out of that assumption
+            # when it happens...
+            ancestors = [a_page for a_page in page_list
+                                    if _is_equal_or_parent_of(a_page, page2)]
+            top_level = min((a_page.level for a_page in page_list))
 
-        siblings  = [a_page for a_page in page_list
-                            if a_page.parent_id == page2.id or
-                               any((_is_sibling_of(a_page, a) for a in ancestors))]
-        return siblings
-    except AttributeError:
-        return ()
+            if not ancestors:
+                # Happens when we sit on a page outside the navigation tree
+                # so fake an active root page to avoid a get_ancestors() db call
+                # which would only give us a non-navigation root page anyway.
+                p = Page(title="dummy", tree_id=-1, parent_id=None, in_navigation=False)
+                ancestors = (p,)
+
+            siblings  = [a_page for a_page in page_list
+                                if a_page.parent_id == page2.id or
+                                   a_page.level == top_level or
+                                   any((_is_sibling_of(a_page, a) for a in ancestors))]
+            return siblings
+        except AttributeError:
+            pass
+
+    return ()
 
 # ------------------------------------------------------------------------
-

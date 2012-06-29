@@ -5,13 +5,11 @@
 Track the modification date for objects.
 """
 
-try:
-    from email.utils import parsedate_tz, mktime_tz
-except ImportError: # py 2.4 compat
-    from email.Utils import parsedate_tz, mktime_tz
+from email.utils import parsedate_tz, mktime_tz
 
 from django.db import models
 from django.db.models.signals import pre_save
+from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
 # ------------------------------------------------------------------------
@@ -20,9 +18,7 @@ def pre_save_handler(sender, instance, **kwargs):
     Intercept attempts to save and insert the current date and time into
     creation and modification date fields.
     """
-    from datetime import datetime
-
-    now = datetime.now()
+    now = timezone.now()
     if instance.id is None:
         instance.creation_date = now
     instance.modification_date = now

@@ -1,3 +1,7 @@
+# ------------------------------------------------------------------------
+# coding=utf-8
+# ------------------------------------------------------------------------
+
 """
 Media library-based file inclusion tool. Can handle any type of media file,
 not only images.
@@ -16,7 +20,13 @@ from django.utils.translation import ugettext_lazy as _
 
 from feincms.admin.item_editor import ItemEditorForm
 from feincms.module.medialibrary.models import MediaFile
-from feincms.templatetags import feincms_thumbnail
+from feincms.module.medialibrary.thumbnail import admin_thumbnail
+
+
+warnings.warn("The contents of feincms.content.medialibrary.models will be replaced"
+    " with feincms.content.medialibrary.v2 in FeinCMS v1.7. The old media file content"
+    " here interferes with Django's raw_id_fields and is generally messy.",
+    DeprecationWarning, stacklevel=2)
 
 
 class MediaFileWidget(forms.TextInput):
@@ -37,8 +47,8 @@ class MediaFileWidget(forms.TextInput):
             except (AttributeError, ObjectDoesNotExist):
                 caption = _('(no caption)')
 
-            if mf.type == 'image':
-                image = feincms_thumbnail.thumbnail(mf.file.name, '240x120')
+            image = admin_thumbnail(mf)
+            if image:
                 image = u'<img src="%(url)s" alt="" /><br />' % {'url': image}
             else:
                 image = u''
@@ -116,13 +126,12 @@ class MediaFileContent(models.Model):
         cls.feincms_item_editor_form = MediaFileContentAdminForm
 
     def render(self, **kwargs):
-        request = kwargs.get('request')
         return render_to_string([
             'content/mediafile/%s_%s.html' % (self.mediafile.type, self.position),
             'content/mediafile/%s.html' % self.mediafile.type,
             'content/mediafile/%s.html' % self.position,
             'content/mediafile/default.html',
-            ], { 'content': self, 'request': request })
+            ], { 'content': self }, context_instance=kwargs.get('context'))
 
     @classmethod
     def default_create_content_type(cls, cms_model):
