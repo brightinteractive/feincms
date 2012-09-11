@@ -1,4 +1,7 @@
-import json
+try:
+    import json
+except ImportError:
+    from django.utils import simplejson as json  # Python 2.5
 
 from django.db import models
 from django.utils.safestring import mark_safe
@@ -95,3 +98,4 @@ class TableContent(models.Model):
         self.html = self.data and self.FORMATTERS[self.type](json.loads(self.data)) or u''
 
         super(TableContent, self).save(*args, **kwargs)
+    save.alters_data = True
