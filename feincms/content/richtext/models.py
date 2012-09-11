@@ -120,10 +120,14 @@ class RichTextContent(models.Model):
                     DeprecationWarning, stacklevel=2)
 
                 from feincms.utils.html.cleanse import cleanse_html
-                cls.cleanse = cleanse_html
+                cleanse_func = cleanse_html
             # Otherwise use passed callable
             else:
-                cls.cleanse = cleanse
+                cleanse_func = cleanse
+
+            def cleanse_method(self, html):
+                return cleanse_func(html)
+            cls.cleanse = cleanse_method
 
         # TODO: Move this into somewhere more generic:
         if settings.FEINCMS_TIDY_HTML:
